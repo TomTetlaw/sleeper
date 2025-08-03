@@ -10,9 +10,9 @@ PlayerForwardTexture: *texture;
 PlayerBackwardTexture: *texture;
 PlayerLeftTexture: *texture;
 PlayerRightTexture: *texture;
-
 EnemyTexture: *texture;
 SkullTexture: *texture;
+GoalTexture: *texture;
 
 WindowWidth := 1366;
 WindowHeight := 768;
@@ -467,7 +467,7 @@ FindEntity
 }
 
 FindPathToTile
-:: (Arena: *arena, Level: level, StartX: int, StartY: int, Goal: vec2i)
+:: (Arena: *arena, Level: level, Start: vec2i, Goal: vec2i)
 -> [] vec2i, bool
 {
   Visited := ArenaPushView(Arena, bool, Level.Width * Level.Height);
@@ -475,11 +475,11 @@ FindPathToTile
   Path := CreateArenaArray(Arena, vec2i);
 
   Queue := CreateArenaArray(Arena, vec2i);
-  ArrayAdd(*Queue, .{StartX, StartY});
+  ArrayAdd(*Queue, Start);
 
   W := Level.Width;
-  Visited[StartX + StartY*W] = true;
-  Parent[StartX + StartY*W] = .{-1, -1};
+  Visited[Start.x + Start.y*W] = true;
+  Parent[Start.x + Start.y*W] = .{-1, -1};
 
   InBounds
   :: (Level: level, P: vec2i)
@@ -539,143 +539,6 @@ FindPathToTile
   return Path, Path.count > 0;
 }
 
-outcome_kind
-:: enum
-{
-  movement;
-  reached_goal;
-  dead;
-}
-
-outcome
-:: struct
-{
-  Kind: outcome_kind;
-  Po: vec2i;
-}
-
-path_node
-:: struct
-{
-  P: vec2i;
-  Dir: movement_direction;
-  From, To: vec2i;
-}
-
-tile_outcome
-:: struct
-{
-  Outcomes: [..] outcome;
-  P: vec2i;
-  PathNodes: [] path_node;
-  Reachable: bool;
-}
-
-FindLevelOutcomes
-:: (Arena: *arena, Level: level)
--> [] tile_outcome
-{
-  TileOutcomes := ArenaPushView(Arena, tile_outcome, Level.Width * Level.Height);
-  for y: 0..Level.Height-1
-  {
-    for x: 0..Level.Width-1
-    {
-      Path, Reachable := FindPathToTile(Arena, Level, Level.Player.Px, Level.Player.Py, .{x, y});
-      TileOutcome := *TileOutcomes[x + y*Level.Width];
-      TileOutcome.P = .{x, y};
-      TileOutcome.Reachable = Reachable;
-      if Reachable
-      {
-        TileOutcome.Outcomes = CreateArenaArray(Arena, outcome);
-
-        PathNodes := ArenaPushView(Arena, path_node, Path.count);
-        LastP := vec2i.{Level.Player.Px, Level.Player.Py};
-        for Path
-        {
-          PathNodes[it_index].P = it;
-          PathNodes[it_index].Dir = DirectionFromMove(.{LastP.x - it.x, LastP.y - it.y});
-          PathNodes[it_index].From = it;
-          PathNodes[it_index].To = LastP;
-          LastP = it;
-        }
-
-        TileOutcome.PathNodes = PathNodes;
-      }
-    }
-  }
-  for y: 0..Level.Height-1
-  {
-    for x: 0..Level.Width-1
-    {
-      TileOutcome := *TileOutcomes[x + y*Level.Width];
-      if TileOutcome.Reachable
-      {
-        Entity := GetEntityAt(Level, x, y);
-        Outcome := outcome.{.movement, .{x, y}};
-        if Entity != *StubEntity
-        {
-          if Entity.Flags & .causes_death
-          {
-            Outcome = outcome.{.dead, .{x, y}};
-          }
-          if Entity.Flags & .level_goal
-          {
-            Outcome = outcome.{.reached_goal, .{x, y}};
-          }
-        }
-        for TileOutcome.PathNodes
-        {
-          TileOutcomeAtPoint := *TileOutcomes[it.P.x + it.P.y*Level.Width];
-          ArrayAdd(*TileOutcomeAtPoint.Outcomes, Outcome);
-        }
-      }
-    }
-  }
-  return TileOutcomes;
-}
-
-FindPossibleOutcome
-:: (TileOutcome: tile_outcome, Kind: outcome_kind)
--> bool
-{
-  for TileOutcome.Outcomes
-  {
-    if it.Kind == Kind
-    {
-      return true;
-    }
-  }
-  return false;
-}
-
-FindPossibleOutcomeFraction
-:: (Level: level, TileOutcomes: [] tile_outcome, P: vec2i, Kind: outcome_kind)
--> float, float
-{
-  TileOutcome := *TileOutcomes[P.x + P.y*Level.Width];
-  D := -1.0;
-  if TileOutcome.Outcomes.count > 0
-  {
-    Count := 0.0;
-    for TileOutcome.Outcomes
-    {
-      if it.Kind == Kind
-      {
-        Count += 1.0;
-        if D < 0.0
-        {
-          // Pa := WorldPositionFromTilePosition(Level, );
-          // Pb := WorldPositionFromTilePosition(Level, it.Po.x, it.Po.y);
-          // D = Distance(Pa, Pb);
-          D = Abs(cast(float) ((P.x - it.Po.x) + (P.y - it.Po.y)));
-        }
-      }
-    }
-    return Count / TileOutcome.Outcomes.count, D;
-  }
-  return 0.0, 9999.0;
-}
-
 tile_drawable_kind
 :: enum
 {
@@ -693,6 +556,22 @@ tile_drawable
   Layer: int;
 }
 
+tile_outcome
+:: struct
+{
+  EntityP: vec2i;
+}
+
+tile_outcomes
+:: struct
+{
+  P: vec2i;
+  Outcomes: [..] tile_outcome;
+  DeathFraction: float;
+  GoalFraction: float;
+  Initialized: bool;
+}
+
 GetTileDrawables
 :: (Arena: *arena, Level: level)
 -> [] tile_drawable
@@ -702,68 +581,46 @@ GetTileDrawables
   drawable_layer_entity :: 0;
   drawable_layer_tile :: 1;
 
-  Counts := ArenaPushView(Arena, int, Level.Width * Level.Height);
-  Drawables := CreateArenaArray(Arena, tile_drawable);
-  for Xa: 0..Level.Width-1 for Ya: 0..Level.Height-1
+  TileOutcomes := ArenaPushView(Arena, tile_outcomes, Level.Width * Level.Height);
+  for X: 0..Level.Width-1 for Y: 0..Level.Height-1
   {
-    TileA := GetTileAt(Level, Xa, Ya);
-    if TileA.Blocking continue;
-    EntityA := GetEntityAt(Level, Xa, Ya);
-    if EntityA.Flags & .blocking continue;
-
-    Paths := vec2i.[
-      .{PlayerP.x + -1, PlayerP.y +  0},
-      .{PlayerP.x +  1, PlayerP.y +  0},
-      .{PlayerP.x +  0, PlayerP.y + -1},
-      .{PlayerP.x +  0, PlayerP.y +  1},
-    ];
-    for Paths
+    Path, Reachable := FindPathToTile(Arena, Level, PlayerP, .{X, Y});
+    if Reachable
     {
-      TileB := GetTileAt(Level, Xb, Yb);
-      EntityB := GetEntityAt(Level, Xb, Yb);
-      if TileB.Blocking continue;
-      if EntityB.Flags & .blocking continue;
-      if EntityB == *StubEntity continue;
-      if EntityB.Kind == .player continue;
-
-      Path, Reachable := FindPathToTile(Arena, Level, Xb, Yb, .{EntityB.Px, EntityB.Py});
-      if !Reachable continue;
-
-      LastP := vec2i.{Path[0].x, Path[0].y};
+      Entity := GetEntityAt(Level, X, Y);
       for < Path
       {
-        Dir := DirectionFromMove(.{it.x - LastP.x, it.y - LastP.y});
-        LastP = it;
-
-        Pa := WorldPositionFromTilePosition(Level, PlayerP);
-        Pb := WorldPositionFromTilePosition(Level, .{it.y, it.y});
-        D := Distance(Pa, Pb);
-        MaxDistance := Max(Level.Width, Level.Height) * Level.TileSize * .5;
-        if D >= MaxDistance continue;
-
-        Alpha := 1.0 - (D / MaxDistance);
-
-        if EntityB.Flags & .causes_death
+        TileOutcome := *TileOutcomes[it.x + it.y*Level.Width];
+        if !TileOutcome.Initialized
         {
-          Drawable: tile_drawable;
-          Drawable.Kind = .entity;
-          Drawable.P = .{it.x, it.y};
-          Drawable.Texture = SkullTexture;
-          Drawable.Colour = .{1, 1, 1, Alpha};
-          Drawable.Layer = drawable_layer_entity;
-          ArrayAdd(*Drawables, Drawable);
-          Counts[it.x + it.y*Level.Width] += 1;
-          DrawTextOnTile(Level, .{it.x, it.y}, TempString("%", FormatFloat.{value = Alpha, trailing_width = 1}), .{0, 1, 0, 1});
+          TileOutcome.P = .{it.x, it.y};
+          TileOutcome.Outcomes = CreateArenaArray(Arena, tile_outcome);
+          TileOutcome.Initialized = true;
+        }
+        if Entity.Flags & .causes_death
+        {
+          TileOutcome.DeathFraction += 1.0;
+          ArrayAdd(*TileOutcome.Outcomes, .{.{Entity.Px, Entity.Py}});
+        }
+        if Entity.Flags & .level_goal
+        {
+          TileOutcome.GoalFraction += 1.0;
+          ArrayAdd(*TileOutcome.Outcomes, .{.{Entity.Px, Entity.Py}});
         }
       }
     }
   }
-  for * Drawables
+  Drawables := CreateArenaArray(Arena, tile_drawable);
+  for * TileOutcomes
   {
-    Count := Counts[it.P.x + it.P.y*Level.Width];
-    if it.Kind == .tile
+    if it.Outcomes.count > 0
     {
-      it.Colour.w /= Count;
+      it.DeathFraction /= it.Outcomes.count;
+      it.GoalFraction /= it.Outcomes.count;
+      Pa := ScreenPositionFromTilePosition(Level, it.P);
+      Pb := ScreenPositionFromTilePosition(Level, it.EntityP);
+      ArrayAdd(*Drawables, .{.entity, it.P, SkullTexture, .{1, 1, 1, it.DeathFraction}, drawable_layer_entity});
+      ArrayAdd(*Drawables, .{.entity, it.P, GoalTexture, .{1, 1, 1, it.GoalFraction}, drawable_layer_entity});
     }
   }
   DrawablesSortFunction
@@ -798,6 +655,8 @@ main
   PlayerRightTexture = LoadTexture(AssetArena, "Textures/PlayerRight.png");
   EnemyTexture = LoadTexture(AssetArena, "Textures/Enemy.png");
   SkullTexture = LoadTexture(AssetArena, "Textures/Skull.png");
+  GoalTexture = LoadTexture(AssetArena, "Textures/Goal.png");
+
   CurrentLevel = LoadLevel(GameArena, Level0);
 
   Quit := false;
