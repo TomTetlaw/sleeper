@@ -147,7 +147,7 @@ DrawText
   Text.Position = Position;
   Text.String = String;
   Text.Colour = Colour;
-  AddLinkedList(*FirstText, Text);
+  LinkedListAdd(*FirstText, Text);
 }
 
 DrawTextOnTile

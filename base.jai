@@ -1,11 +1,46 @@
 
 // NOTE(tt): linked lists
 
-AddLinkedList
-:: (First: **$T, Value: *T)
+LinkedListAdd
+:: (First: **$T, Value: *T, NextName := "Next")
 {
-  Value.Next = First.*;
+  #insert #run tprint("Next := *Value.%", NextName);
+  Next.* = First.*;
   First.* = Value;
+}
+
+linked_list
+:: struct($T)
+{
+  First: *T;
+  NextName: string;
+}
+
+EachElement
+:: (First: *$T, $NextName := "Next")
+-> linked_list
+{
+  return .{First, NextName};
+}
+
+for_expansion
+:: (List: linked_list($T), Body: Code, Flags: For_Flags) #expand
+{
+  Value := List.First;
+  Index := 0;
+
+  while Value
+  {
+    `it := Value;
+    `it_index := Index;
+
+    {
+      #insert Body;
+    }
+
+    #insert #run tprint("Value := Value.%", List.NextName);
+    Index += 1;
+  }
 }
 
 // NOTE(tt): math stuff

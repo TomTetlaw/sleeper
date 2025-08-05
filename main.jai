@@ -258,7 +258,7 @@ FindEntity
   return null;
 }
 
-dag_node_kind
+state_outcome
 :: enum
 {
   goal;
@@ -269,36 +269,54 @@ dag_node_kind
 dag_node
 :: struct
 {
-  Kind: dag_node_kind;
+  Next: *dag_node;
   Hash: u32;
-  Children: [] *dag_node;
-  State: level;
   Depth: int;
+  Outcome: state_outcome;
+  Children: [] *dag_node;
+  Entities: [] entity;
+}
+
+node_action
+:: enum
+{
 }
 
 BuildGraph
 :: (Arena: *arena, InitialState: level)
 -> [] *dag_node
 {
-  Queue := CreateArenaArray(Arena, level);
+  max_depth :: 15;
+
+  FirstNode: *dag_node;
+  Queue := CreateArenaArray(Arena, *dag_node);
   NodeHash := CreateArenaTable(Arena, u32, *dag_node);
+
+
 
   while Queue.count > 0
   {
     Node := Queue[0];
     ArrayRemove(*Queue, 0);
-
-    if Node.Depth >= max_depth
+    if Node.Depth < max_depth
     {
-      continue;
+      Node.Hash = HashNode(Node);
+      if !TableContains(*Visited, Node.Hash)
+      {
+        TableAdd(*NodeHash, Node.Hash, Node);
+        if IsOngoing(Node)
+        {
+          Actions := NodeActions(Node);
+          for Actions
+          {
+            Next := StepNode(Node, it);
+            NextHash := HashNode(Next);
+            ArrayAdd(*Node.Children, Next);
+            ArrayAdd(*Queue, Next);
+          }
+        }
+      }
     }
-    State.Hash = HashState(State);
-    if TableContains(*Visited, State.Hash)
-    {
-      continue;
-    }
-
-
   }
 }
 
