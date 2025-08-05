@@ -277,9 +277,19 @@ dag_node
   Entities: [] entity;
 }
 
-node_action
+node_action_kind
 :: enum
 {
+  move;
+  interact;
+}
+
+node_action
+:: struct
+{
+  Kind: node_action_kind;
+  Actor: *entity; // NOTE(tt): the entity that is doing the action
+  Target: *entity; // NOTE(tt): the entity that the action is happening to
 }
 
 BuildGraph
