@@ -165,6 +165,8 @@ DebugPrintArena
 
 ArrayAdd :: array_add;
 ArrayRemove :: array_ordered_remove_by_index;
+TableContains :: table_contains;
+TableAdd :: table_add;
 
 ArrayReset
 :: (Array: *[..] $T)
@@ -177,6 +179,15 @@ CreateArenaArray
 -> [..] T
 {
   Result: [..] T;
+  Result.allocator = CreateArenaAllocator(Arena);
+  return Result;
+}
+
+CreateArenaTable
+:: (Arena: *arena, $K: Type, $V: Type)
+-> [..] T
+{
+  Result: Table(K, V);
   Result.allocator = CreateArenaAllocator(Arena);
   return Result;
 }

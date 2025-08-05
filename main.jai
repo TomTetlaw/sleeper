@@ -30,39 +30,33 @@ CurrentLevel: level;
 PlayerDirection: movement_direction;
 
 LevelIndex := 0;
-Levels := string.[Level0, Level1];
 HideLevel := false;
 
 Level0 :: #string HERE
-xxxxx
-x x x
-x xgx
-x x x
-x x x
-x   x
-x x x
-x x x
-xpxex
-x x x
-xxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxx
+x p                     x
+xxxxxxxxxxx   xxxxx  xxxx
+x    g          e       x
+xxxxxxxxxxxxxxxxxxxxxxxxx
 HERE
 
 Level1 :: #string HERE
-xxxxxxxxxxxxxxxxxxxx
-x         x        x
-x         x        x
-x         x        x
-x         x        x
-x         x        x
-x         x        x
-x  p      d        x
-x         x        x
-x         x        x
-x         x        x
-x         x    e   x
-x         x    g   x
-xxxxxxxxxxxxxxxxxxxx
+xxxxxxxxxxxxxxxxxxxxxxxxx
+x p                     x
+xxxxxxxxxxxxx xxxxxx xxxx
+x            e  g       x
+xxxxxxxxxxxxxxxxxxxxxxxxx
 HERE
+
+Level2 :: #string HERE
+xxxxxxxxxxxxxxxxxxxxxxxxx
+x p                     x
+xxxxxxxxxxxxxxxxxxdxxxxxx
+x    g                  x
+xxxxxxxxxxxxxxxxxxxxxxxxx
+HERE
+
+Levels := string.[Level0, Level1, Level2];
 
 PlayerTextureFromDirection
 :: (Dir: movement_direction)
@@ -84,84 +78,6 @@ PlayerTextureFromDirection
   return null;
 }
 
-draw_text
-:: struct
-{
-  Next: *draw_text;
-  Font: *font;
-  Position: vec2;
-  String: string;
-  Colour: vec4;
-}
-
-DrawText
-:: (Font: *font, Position: vec2, String: string, Colour := vec4.{1, 1, 1, 1})
-{
-  Text := ArenaPushStruct(TextArena, draw_text);
-  Text.Font = Font;
-  Text.Position = Position;
-  Text.String = String;
-  Text.Colour = Colour;
-  AddLinkedList(*FirstText, Text);
-}
-
-DrawTextOnTile
-:: (Level: level, P: vec2i, Text: string, Colour := vec4.{1, 1, 1, 1})
-{
-  DrawText(DebugFont, ScreenPositionFromTilePosition(Level, P), Text, Colour);
-}
-
-DebugDrawText
-:: (Text: string, Colour := vec4.{1, 1, 1, 1})
-{
-  DrawText(GameFont, DebugStringPosition, Text, Colour);
-  DebugStringPosition.y += 16.0;
-}
-
-DrawAllText
-:: ()
-{
-  Text := FirstText;
-  while Text
-  {
-    Simp.draw_text(Text.Font, xx Text.Position.x, xx Text.Position.y, Text.String, Text.Colour);
-    Text = Text.Next;
-  }
-  DebugStringPosition := vec2.{16, 16};
-
-  FirstText = null;
-  ArenaReset(TextArena);
-}
-
-draw_batch_kind
-:: enum
-{
-  coloured_quad;
-  textured_quad;
-}
-
-draw_batch_entry
-:: struct
-{
-  Quad: quad;
-  Colour: vec4;
-}
-
-draw_batch
-:: struct
-{
-  Kind: draw_batch_kind;
-  Entries: [..] draw_batch_entry;
-  Texture: texture;
-}
-
-draw_batcher
-:: struct
-{
-  Hash: [] int;
-  Batches: [..] draw_batch;
-}
-
 texture
 :: struct
 {
@@ -179,106 +95,10 @@ LoadTexture
   return Result;
 }
 
-InitDrawBatcher
-:: (Arena: *arena, Batcher: *draw_batcher)
-{
-  Batcher.Hash = ArenaPushView(Arena, int, 1024);
-  Batcher.Batches = CreateArenaArray(Arena, draw_batch);
-}
-
-DrawColouredQuad
-:: (Arena: *arena, Batcher: *draw_batcher, Quad: quad, Colour: vec4)
-{
-  if Batcher.Hash.count == 0
-  {
-    InitDrawBatcher(Arena, Batcher);
-  }
-  if Batcher.Hash[0] == 0
-  {
-    Batcher.Hash[0] = 1;
-    Batch: draw_batch;
-    Batch.Kind = .coloured_quad;
-    Batch.Entries = CreateArenaArray(Arena, draw_batch_entry);
-    ArrayAdd(*Batcher.Batches, Batch);
-  }
-  Batch := *Batcher.Batches[0];
-  ArrayAdd(*Batch.Entries, .{Quad, Colour});
-}
-
-DrawTexturedQuad
-:: (Arena: *arena, Batcher: *draw_batcher, Quad: quad, Texture: *texture, Colour := vec4.{1, 1, 1, 1})
-{
-  if Batcher.Hash.count == 0
-  {
-    InitDrawBatcher(Arena, Batcher);
-  }
-  Hash := 1 + HashString(Texture.Path) % 1024;
-  if Batcher.Hash[Hash] == 0
-  {
-    Batcher.Hash[Hash] = Batcher.Batches.count + 1;
-    Batch: draw_batch;
-    Batch.Kind = .textured_quad;
-    Batch.Texture = Texture;
-    ArrayAdd(*Batcher.Batches, Batch);
-  }
-  Index := Batcher.Hash[Hash] - 1;
-  Batch := *Batcher.Batches[Index];
-  ArrayAdd(*Batch.Entries, .{Quad, Colour});
-}
-
-BatchesSortFunction
-:: (A: draw_batch, B: draw_batch)
--> int
-{
-  return cast(int) A.Kind - cast(int) B.Kind;
-}
-
-DrawBatches :: (Batcher: draw_batcher)
-{
-  QuickSort(Batcher.Batches, BatchesSortFunction);
-  FirstRun := true;
-  CurrentKind := draw_batch_kind.coloured_quad;
-  CurrentTexture := "";
-  for Batcher.Batches
-  {
-    ChangedState := FirstRun || it.Kind != CurrentKind;
-    if it.Kind == .textured_quad
-    {
-      ChangedTexture := it.Texture.Path != CurrentTexture;
-      if ChangedTexture
-      {
-        ChangedState = true;
-        CurrentTexture = it.Texture.Path;
-      }
-    }
-    if ChangedState
-    {
-      if it.Kind ==
-      {
-        case .coloured_quad;
-          Simp.set_shader_for_color(true);
-        case .textured_quad;
-          Simp.set_shader_for_images(*it.Texture);
-      }
-      if !FirstRun
-      {
-        Simp.immediate_flush();
-      }
-      Simp.immediate_begin();
-      FirstRun = false;
-      CurrentKind = it.Kind;
-    }
-    for it.Entries
-    {
-      Simp.immediate_quad(it.Quad.Left, it.Quad.Top, it.Quad.Right, it.Quad.Bottom, it.Colour);
-    }
-  }
-  Simp.immediate_flush();
-}
-
 entity_kind
 :: enum
 {
+  stub;
   player;
   enemy;
   goal;
@@ -332,34 +152,6 @@ level
   Enemy: *entity;
   Entities: [..] entity;
   Tiles: [] tile;
-}
-
-ScreenPositionFromTilePosition
-:: (Level: level, P: vec2i)
--> vec2
-{
-  return vec2.{
-    (P.x - Level.Player.Px)*Level.TileSize + WindowWidth*.5,
-    (P.y - Level.Player.Py)*Level.TileSize + WindowHeight*.5
-  };
-}
-
-WorldPositionFromTilePosition
-:: (Level: level, P: vec2i)
--> vec2
-{
-  return vec2.{P.x * Level.TileSize, P.y * Level.TileSize};
-}
-
-QuadFromScreenPosition
-:: (Level: level, P: vec2)
--> quad
-{
-  Left := P.x - Level.TileSize*.5;
-  Top := P.y - Level.TileSize*.5;
-  Right := P.x + Level.TileSize*.5;
-  Bottom := P.y + Level.TileSize*.5;
-  return .{Left, Top, Right, Bottom};
 }
 
 LoadLevel
@@ -432,7 +224,7 @@ LoadLevel
       case #char "g";
         Entity: entity;
         Entity.Kind = .goal;
-        Entity.Flags = .level_goal;
+        Entity.Flags = .level_goal | .blocking | .interactable;
         Entity.Px = X;
         Entity.Py = Y;
         ArrayAdd(*Result.Entities, Entity);
@@ -466,170 +258,63 @@ FindEntity
   return null;
 }
 
-FindPathToTile
-:: (Arena: *arena, Level: level, Start: vec2i, Goal: vec2i)
--> [] vec2i, bool
+dag_node_kind
+:: enum
 {
-  Visited := ArenaPushView(Arena, bool, Level.Width * Level.Height);
-  Parent := ArenaPushView(Arena, vec2i, Level.Width * Level.Height);
-  Path := CreateArenaArray(Arena, vec2i);
+  goal;
+  death;
+  ongoing;
+}
 
-  Queue := CreateArenaArray(Arena, vec2i);
-  ArrayAdd(*Queue, Start);
+dag_node
+:: struct
+{
+  Kind: dag_node_kind;
+  Hash: u32;
+  Children: [] *dag_node;
+  State: level;
+  Depth: int;
+}
 
-  W := Level.Width;
-  Visited[Start.x + Start.y*W] = true;
-  Parent[Start.x + Start.y*W] = .{-1, -1};
-
-  InBounds
-  :: (Level: level, P: vec2i)
-  -> bool
-  {
-    InsideLeft := P.x >= 0;
-    InsideRight := P.x < Level.Width;
-    InsideTop := P.y >= 0;
-    InsideBottom := P.y < Level.Height;
-    return InsideLeft && InsideRight && InsideTop && InsideBottom;
-  }
-
-  IsWalkable
-  :: (Level: level, P: vec2i)
-  -> bool
-  {
-    Tile := GetTileAt(Level, P.x, P.y);
-    Entity := GetEntityAt(Level, P.x, P.y);
-    return !Tile.Blocking && !(Entity.Flags & .blocking);
-  }
+BuildGraph
+:: (Arena: *arena, InitialState: level)
+-> [] *dag_node
+{
+  Queue := CreateArenaArray(Arena, level);
+  NodeHash := CreateArenaTable(Arena, u32, *dag_node);
 
   while Queue.count > 0
   {
-    Current := Queue[0];
+    Node := Queue[0];
     ArrayRemove(*Queue, 0);
-    if Current.x == Goal.x && Current.y == Goal.y
+
+    if Node.Depth >= max_depth
     {
-      P := Goal;
-      while P.x != -1 && P.y != -1
-      {
-        ArrayAdd(*Path, P);
-        P = Parent[P.x + P.y*W];
-      }
-      break;
+      continue;
     }
-    else
+    State.Hash = HashState(State);
+    if TableContains(*Visited, State.Hash)
     {
-      Dirs := vec2i.[
-        .{1, 0},
-        .{0, -1},
-        .{-1, 0},
-        .{0, 1},
-      ];
-      for Dirs
-      {
-        P := vec2i.{Current.x + it.x, Current.y + it.y};
-        if InBounds(Level, P) && IsWalkable(Level, P) && !Visited[P.x + P.y*W]
-        {
-          Visited[P.x + P.y*W] = true;
-          Parent[P.x + P.y*W] = Current;
-          ArrayAdd(*Queue, P);
-        }
-      }
+      continue;
     }
+
+
   }
-
-  return Path, Path.count > 0;
-}
-
-tile_drawable_kind
-:: enum
-{
-  tile;
-  entity;
 }
 
 tile_drawable
 :: struct
 {
-  Kind: tile_drawable_kind;
   P: vec2i;
   Texture: *texture;
   Colour: vec4;
-  Layer: int;
-}
-
-tile_outcome
-:: struct
-{
-  EntityP: vec2i;
-}
-
-tile_outcomes
-:: struct
-{
-  P: vec2i;
-  Outcomes: [..] tile_outcome;
-  DeathFraction: float;
-  GoalFraction: float;
-  Initialized: bool;
 }
 
 GetTileDrawables
 :: (Arena: *arena, Level: level)
 -> [] tile_drawable
 {
-  PlayerP := vec2i.{Level.Player.Px, Level.Player.Py};
-
-  drawable_layer_entity :: 0;
-  drawable_layer_tile :: 1;
-
-  TileOutcomes := ArenaPushView(Arena, tile_outcomes, Level.Width * Level.Height);
-  for X: 0..Level.Width-1 for Y: 0..Level.Height-1
-  {
-    Path, Reachable := FindPathToTile(Arena, Level, PlayerP, .{X, Y});
-    if Reachable
-    {
-      Entity := GetEntityAt(Level, X, Y);
-      for < Path
-      {
-        TileOutcome := *TileOutcomes[it.x + it.y*Level.Width];
-        if !TileOutcome.Initialized
-        {
-          TileOutcome.P = .{it.x, it.y};
-          TileOutcome.Outcomes = CreateArenaArray(Arena, tile_outcome);
-          TileOutcome.Initialized = true;
-        }
-        if Entity.Flags & .causes_death
-        {
-          TileOutcome.DeathFraction += 1.0;
-          ArrayAdd(*TileOutcome.Outcomes, .{.{Entity.Px, Entity.Py}});
-        }
-        if Entity.Flags & .level_goal
-        {
-          TileOutcome.GoalFraction += 1.0;
-          ArrayAdd(*TileOutcome.Outcomes, .{.{Entity.Px, Entity.Py}});
-        }
-      }
-    }
-  }
   Drawables := CreateArenaArray(Arena, tile_drawable);
-  for * TileOutcomes
-  {
-    if it.Outcomes.count > 0
-    {
-      it.DeathFraction /= it.Outcomes.count;
-      it.GoalFraction /= it.Outcomes.count;
-      Pa := ScreenPositionFromTilePosition(Level, it.P);
-      Pb := ScreenPositionFromTilePosition(Level, it.EntityP);
-      ArrayAdd(*Drawables, .{.entity, it.P, SkullTexture, .{1, 1, 1, it.DeathFraction}, drawable_layer_entity});
-      ArrayAdd(*Drawables, .{.entity, it.P, GoalTexture, .{1, 1, 1, it.GoalFraction}, drawable_layer_entity});
-    }
-  }
-  DrawablesSortFunction
-  :: (A: tile_drawable, B: tile_drawable)
-  -> int
-  {
-    return cast(int) B.Layer - cast(int) A.Layer;
-  }
-  QuickSort(Drawables, DrawablesSortFunction);
   return Drawables;
 }
 
@@ -702,7 +387,7 @@ main
                 TryMoveEntity(GameArena, *CurrentLevel, CurrentLevel.Player,  1,  0);
                 PlayerDirection = .right;
               case #char "E";
-                HandleUseKey(CurrentLevel);
+                HandleUseKey(GameArena, CurrentLevel);
 
               case .ARROW_UP;
                 TryMoveEntity(GameArena, *CurrentLevel, CurrentLevel.Enemy,  0, -1);
@@ -789,8 +474,7 @@ HandleEntityInteraction
   {
     if Other.Kind == .goal
     {
-      LevelIndex = (LevelIndex + 1) % Levels.count;
-      CurrentLevel = LoadLevel(Arena, Levels[LevelIndex]);
+      LoadNextLevel(Arena);
     }
   }
   return true;
@@ -904,8 +588,15 @@ DrawLevel
   }
 }
 
+LoadNextLevel
+:: (Arena: *arena)
+{
+  LevelIndex = (LevelIndex + 1) % Levels.count;
+  CurrentLevel = LoadLevel(Arena, Levels[LevelIndex]);
+}
+
 HandleUseKey
-:: (Level: level)
+:: (Arena: *arena, Level: level)
 {
   Dirs := vec2i.[
     .{1, 0},
@@ -924,10 +615,13 @@ HandleUseKey
     Entity := GetEntityAt(Level, P.x, P.y);
     if Entity.Flags & .interactable
     {
-      if Entity.Kind == .door
+      if Entity.Kind ==
       {
-        Entity.Flags |= .hidden;
-        Entity.Flags &= ~.blocking;
+        case .door;
+          Entity.Flags |= .hidden;
+          Entity.Flags &= ~.blocking;
+        case .goal;
+          LoadNextLevel(Arena);
       }
     }
   }
@@ -966,6 +660,34 @@ DirectionFromMove
   return .none;
 }
 
+ScreenPositionFromTilePosition
+:: (Level: level, P: vec2i)
+-> vec2
+{
+  return vec2.{
+    (P.x - Level.Player.Px)*Level.TileSize + WindowWidth*.5,
+    (P.y - Level.Player.Py)*Level.TileSize + WindowHeight*.5
+  };
+}
+
+WorldPositionFromTilePosition
+:: (Level: level, P: vec2i)
+-> vec2
+{
+  return vec2.{P.x * Level.TileSize, P.y * Level.TileSize};
+}
+
+QuadFromScreenPosition
+:: (Level: level, P: vec2)
+-> quad
+{
+  Left := P.x - Level.TileSize*.5;
+  Top := P.y - Level.TileSize*.5;
+  Right := P.x + Level.TileSize*.5;
+  Bottom := P.y + Level.TileSize*.5;
+  return .{Left, Top, Right, Bottom};
+}
+
 TempString
 :: (Format: string, Args: ..Any)
 -> string
@@ -978,9 +700,159 @@ TempString
 }
 
 #load "base.jai";
+#load "draw.jai";
 
 WindowCreation :: #import "Window_Creation";
 Simp :: #import "Simp";
 Input :: #import "Input";
 #import "Basic";
 #import "Math";
+
+/*
+
+InBounds
+:: (Level: level, P: vec2i)
+-> bool
+{
+  InsideLeft := P.x >= 0;
+  InsideRight := P.x < Level.Width;
+  InsideTop := P.y >= 0;
+  InsideBottom := P.y < Level.Height;
+  return InsideLeft && InsideRight && InsideTop && InsideBottom;
+}
+
+IsWalkable
+:: (Level: level, P: vec2i, Goal: vec2i)
+-> bool
+{
+  Tile := GetTileAt(Level, P.x, P.y);
+  Entity := GetEntityAt(Level, P.x, P.y);
+
+  if Tile.Blocking return false;
+
+  GoalEntity := GetEntityAt(Level, Goal.x, Goal.y);
+  if GoalEntity.Kind == .goal
+  {
+    if GoalEntity.Flags & .interactable return true;
+  }
+
+  if Entity.Flags & .blocking return false;
+
+  return true;
+}
+
+pathfinding_state
+:: struct
+{
+  Visited: [] bool;
+  Path: [..] vec2i;
+  AllPaths: [..] [] vec2i;
+}
+
+FindPathRecursive
+:: (Arena: *arena, State: *pathfinding_state, Level: level, P: vec2i, Goal: vec2i, Depth := 0)
+{
+  MaxDepth := 5000;//Max(Level.Width, Level.Height);
+  if Depth >= MaxDepth
+  {
+    return;
+  }
+  if !InBounds(Level, P)
+  {
+    return;
+  }
+  if State.Visited[P.x + P.y*Level.Width]
+  {
+    return;
+  }
+  if !IsWalkable(Level, P, Goal)
+  {
+    return;
+  }
+
+  ArrayAdd(*State.Path, P);
+  State.Visited[P.x + P.y*Level.Width] = true;
+
+  if P.x == Goal.x && P.y == Goal.y
+  {
+    Path := ArenaPushView(Arena, vec2i, State.Path.count);
+    for * Path it.* = State.Path[it_index];
+    ArrayAdd(*State.AllPaths, Path);
+  }
+  else
+  {
+    FindPathRecursive(Arena, State, Level, .{P.x + 1, P.y}, Goal, Depth + 1);
+    FindPathRecursive(Arena, State, Level, .{P.x - 1, P.y}, Goal, Depth + 1);
+    FindPathRecursive(Arena, State, Level, .{P.x, P.y + 1}, Goal, Depth + 1);
+    FindPathRecursive(Arena, State, Level, .{P.x, P.y - 1}, Goal, Depth + 1);
+  }
+
+  State.Visited[P.x + P.y*Level.Width] = false;
+  State.Path.count -= 1;
+}
+
+FindAllPathsToTile
+:: (Arena: *arena, Level: level, Start: vec2i, Goal: vec2i)
+-> [] [] vec2i
+{
+  State := ArenaPushStruct(Arena, pathfinding_state);
+  State.Visited = ArenaPushView(Arena, bool, Level.Width * Level.Height);
+  State.Path = CreateArenaArray(Arena, vec2i);
+  State.AllPaths = CreateArenaArray(Arena, [] vec2i);
+  FindPathRecursive(Arena, State, Level, Start, Goal);
+  return State.AllPaths;
+}
+
+FindShortestPathToTile
+:: (Arena: *arena, Level: level, Start: vec2i, Goal: vec2i)
+-> [] vec2i, bool
+{
+  Visited := ArenaPushView(Arena, bool, Level.Width * Level.Height);
+  Parent := ArenaPushView(Arena, vec2i, Level.Width * Level.Height);
+  Path := CreateArenaArray(Arena, vec2i);
+
+  Queue := CreateArenaArray(Arena, vec2i);
+  ArrayAdd(*Queue, Start);
+
+  W := Level.Width;
+  Visited[Start.x + Start.y*W] = true;
+  Parent[Start.x + Start.y*W] = .{-1, -1};
+
+  while Queue.count > 0
+  {
+    Current := Queue[0];
+    ArrayRemove(*Queue, 0);
+    if Current.x == Goal.x && Current.y == Goal.y
+    {
+      P := Goal;
+      while P.x != -1 && P.y != -1
+      {
+        ArrayAdd(*Path, P);
+        P = Parent[P.x + P.y*W];
+      }
+      break;
+    }
+    else
+    {
+      Dirs := vec2i.[
+        .{1, 0},
+        .{0, -1},
+        .{-1, 0},
+        .{0, 1},
+      ];
+      for Dirs
+      {
+        P := vec2i.{Current.x + it.x, Current.y + it.y};
+        if InBounds(Level, P) && IsWalkable(Level, P, Goal) && !Visited[P.x + P.y*W]
+        {
+          Visited[P.x + P.y*W] = true;
+          Parent[P.x + P.y*W] = Current;
+          ArrayAdd(*Queue, P);
+        }
+      }
+    }
+  }
+
+  return Path, Path.count > 0;
+}
+*/
