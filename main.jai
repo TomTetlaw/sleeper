@@ -258,7 +258,37 @@ FindEntity
   return null;
 }
 
-state_outcome
+node_entity_kind
+:: enum
+{
+  wall;
+  floor;
+  player;
+  enemy;
+  goal;
+  door;
+}
+
+node_entity_flags
+:: enum
+{
+  blocking;
+  causes_death;
+  level_goal;
+  hidden;
+  interactable;
+}
+
+node_entity
+:: struct
+{
+  Id: int;
+  Kind: node_entity_kind;
+  Flags: node_entity_flags;
+  P: vec2i;
+}
+
+node_kind
 :: enum
 {
   goal;
@@ -274,7 +304,7 @@ dag_node
   Depth: int;
   Outcome: state_outcome;
   Children: [] *dag_node;
-  Entities: [] entity;
+  Entities: [] node_entity;
 }
 
 node_action_kind
@@ -288,8 +318,17 @@ node_action
 :: struct
 {
   Kind: node_action_kind;
-  Actor: *entity; // NOTE(tt): the entity that is doing the action
-  Target: *entity; // NOTE(tt): the entity that the action is happening to
+  Actor: *node_entity; // NOTE(tt): the entity that is doing the action
+  Target: *node_entity; // NOTE(tt): the entity that the action is happening to
+  M: vec2i;
+}
+
+graph_context
+:: struct
+{
+  FirstNode: *dag_node;
+  FirstEntity: *node_entity;
+  Tiles: [] tile;
 }
 
 BuildGraph
@@ -298,11 +337,121 @@ BuildGraph
 {
   max_depth :: 15;
 
-  FirstNode: *dag_node;
   Queue := CreateArenaArray(Arena, *dag_node);
   NodeHash := CreateArenaTable(Arena, u32, *dag_node);
 
+  GraphContext: graph_context;
 
+  FindEntities
+  :: (Arena: *arena, Node: *dag_node, Kind: dag_node_kind)
+  -> [] *node_entity
+  {
+    Entities := CreateArenaArray(Arena, *entity);
+    for Node.Entities
+    {
+      if it.Kind == Kind
+      {
+        ArrayAdd(*Entities, it);
+      }
+    }
+    return Entities;
+  }
+
+  NodeActions
+  :: (Arena: *arena, Node: *dag_node)
+  -> [] node_action
+  {
+    Actions := CreateArenaArray(Arena, node_action);
+    Players := FindEntities(Arena, Node, .player);
+    for Player: Players
+    {
+      Dirs := vec2i.{.{-1, 0}, .{1, 0}, .{0, -1}, .{0, 1}};
+      for Dirs
+      {
+        Action: node_action;
+        Action.Kind = .move;
+        Action.Actor = Player;
+        Action.M = it;
+        ArrayAdd(*Actions, Action);
+      }
+      Doors := FindEntities(Arena, Node, .door);
+      for Doors
+      {
+        if Abs(it.P.x - Player.P.x) == 1 || Abs(it.P.y - Player.P.y) == 1
+        {
+          Action: node_action;
+          Action.Kind = .interact;
+          Action.Actor = Player;
+          Action.Target = it;
+          ArrayAdd(*Actions, Action);
+        }
+      }
+    }
+    return Actions;
+  }
+
+  NodeHash
+  :: (Node: *dag_node)
+  -> u32
+  {
+    Hash := GetHash(Node.Outcome);
+    for Node.Entities
+    {
+      Hash = GetHash(it.Id, Hash);
+      Hash = GetHash(it.P.x, Hash);
+      Hash = GetHash(it.P.y, Hash);
+    }
+    return Hash;
+  }
+
+  StepNode
+  :: (Arena: *arena, GraphContext: *graph_context, Node: *dag_node, Action: node_action)
+  -> *dag_node
+  {
+    NewNode := ArenaPushStruct(Arena, dag_node);
+    LinkedListAdd(*GraphContext.FirstNode, NewNode);
+
+    NewNode.Depth = Node.Depth + 1;
+    NewNode.Outcome = .ongoing;
+    NewNode.Entities = ArenaPushView(Arena, node_entity, Node.Entities.count);
+    for Node.Entities
+    {
+      Entity := *NewNode.Entities[it_index];
+      Entity.Id = it_index;
+      Entity.Kind = it.Kind;
+      Entity.Flags = it.Flags;
+      Entity.P = it.P;
+    }
+
+    if Action.Kind ==
+    {
+      case .move;
+        Entity := *NewNode.Entities[Action.Actor.Id];
+        Target := vec2i.{Entity.P.x, Entity.P.y};
+        Other := GetEntityAt(Node, Target);
+        if Other.Flags & .causes_death
+        {
+          NewNode.Outcome = .death;
+          return;
+        }
+        else
+        {
+          NewNode.Entities[Action.Actor.Id].Px += Action.M.x;
+          NewNode.Entities[Action.Actor.Id].Py += Action.M.y;
+        }
+      case .interact;
+        if Action.Target.Kind ==
+        {
+          case .door;
+            NewNode.Entities[Action.Target.Id].Flags |= .hidden;
+            NewNode.Entities[Action.Target.Id].Flags &= ~.blocking;
+          case .goal;
+            NewNode.Outcome = .goal;
+        }
+    }
+
+    return null;
+  }
 
   while Queue.count > 0
   {
@@ -310,11 +459,12 @@ BuildGraph
     ArrayRemove(*Queue, 0);
     if Node.Depth < max_depth
     {
-      Node.Hash = HashNode(Node);
+      Node.Hash = NodeHash(Node);
       if !TableContains(*Visited, Node.Hash)
       {
         TableAdd(*NodeHash, Node.Hash, Node);
-        if IsOngoing(Node)
+        Node.Outcome = NodeOutcome(Node);
+        if Node.Outcome == .ongoing
         {
           Actions := NodeActions(Node);
           for Actions
