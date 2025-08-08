@@ -2,15 +2,15 @@
 // NOTE(tt): linked lists
 
 LinkedListAdd
-:: (First: **$T, Value: *T, NextName := "Next")
+:: (First: **$T, Value: *T, $NextName := "Next")
 {
-  #insert #run tprint("Next := *Value.%", NextName);
+  #insert #run tprint("Next := *Value.%;", NextName);
   Next.* = First.*;
   First.* = Value;
 }
 
 linked_list
-:: struct($T)
+:: struct($T: Type)
 {
   First: *T;
   NextName: string;
@@ -38,7 +38,7 @@ for_expansion
       #insert Body;
     }
 
-    #insert #run tprint("Value := Value.%", List.NextName);
+    #insert #run tprint("Value := Value.%;", List.NextName);
     Index += 1;
   }
 }
@@ -220,7 +220,7 @@ CreateArenaArray
 
 CreateArenaTable
 :: (Arena: *arena, $K: Type, $V: Type)
--> [..] T
+-> Table(K, V)
 {
   Result: Table(K, V);
   Result.allocator = CreateArenaAllocator(Arena);
@@ -313,3 +313,4 @@ CreateArenaAllocator
 #import "Basic";
 #import "Hash";
 #import "Sort";
+#import "Hash_Table";
