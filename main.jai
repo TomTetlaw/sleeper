@@ -258,35 +258,16 @@ FindEntity
   return null;
 }
 
-node_entity_kind
-:: enum
-{
-  wall;
-  floor;
-  player;
-  enemy;
-  goal;
-  door;
-}
-
-node_entity_flags
-:: enum
-{
-  blocking;
-  causes_death;
-  level_goal;
-  hidden;
-  interactable;
-}
-
 node_entity
 :: struct
 {
   Id: int;
-  Kind: node_entity_kind;
-  Flags: node_entity_flags;
+  Kind: entity_kind;
+  Flags: entity_flags;
   P: vec2i;
 }
+
+StubNodeEntity :: node_entity.{};
 
 node_kind
 :: enum
@@ -300,9 +281,9 @@ dag_node
 :: struct
 {
   Next: *dag_node;
+  Kind: node_kind;
   Hash: u32;
   Depth: int;
-  Outcome: state_outcome;
   Children: [] *dag_node;
   Entities: [] node_entity;
 }
@@ -331,127 +312,149 @@ graph_context
   Tiles: [] tile;
 }
 
-BuildGraph
-:: (Arena: *arena, InitialState: level)
--> [] *dag_node
+FindEntities
+:: (Arena: *arena, Node: *dag_node, Kind: entity_kind)
+-> [] *node_entity
 {
-  max_depth :: 15;
-
-  Queue := CreateArenaArray(Arena, *dag_node);
-  NodeHash := CreateArenaTable(Arena, u32, *dag_node);
-
-  GraphContext: graph_context;
-
-  FindEntities
-  :: (Arena: *arena, Node: *dag_node, Kind: dag_node_kind)
-  -> [] *node_entity
+  Entities := CreateArenaArray(Arena, *node_entity);
+  for Node.Entities
   {
-    Entities := CreateArenaArray(Arena, *entity);
-    for Node.Entities
+    if it.Kind == Kind
     {
-      if it.Kind == Kind
-      {
-        ArrayAdd(*Entities, it);
-      }
+      ArrayAdd(*Entities, *it);
     }
-    return Entities;
   }
+  return Entities;
+}
 
-  NodeActions
-  :: (Arena: *arena, Node: *dag_node)
-  -> [] node_action
+NodeActions
+:: (Arena: *arena, Node: *dag_node)
+-> [] node_action
+{
+  Actions := CreateArenaArray(Arena, node_action);
+  Players := FindEntities(Arena, Node, .player);
+  for Player: Players
   {
-    Actions := CreateArenaArray(Arena, node_action);
-    Players := FindEntities(Arena, Node, .player);
-    for Player: Players
+    Dirs := vec2i.[.{-1, 0}, .{1, 0}, .{0, -1}, .{0, 1}];
+    for Dirs
     {
-      Dirs := vec2i.{.{-1, 0}, .{1, 0}, .{0, -1}, .{0, 1}};
-      for Dirs
+      Action: node_action;
+      Action.Kind = .move;
+      Action.Actor = Player;
+      Action.M = it;
+      ArrayAdd(*Actions, Action);
+    }
+    Doors := FindEntities(Arena, Node, .door);
+    for Doors
+    {
+      if Abs(it.P.x - Player.P.x) == 1 || Abs(it.P.y - Player.P.y) == 1
       {
         Action: node_action;
-        Action.Kind = .move;
+        Action.Kind = .interact;
         Action.Actor = Player;
-        Action.M = it;
+        Action.Target = it;
         ArrayAdd(*Actions, Action);
       }
-      Doors := FindEntities(Arena, Node, .door);
-      for Doors
+    }
+  }
+  return Actions;
+}
+
+HashNode
+:: (Node: *dag_node)
+-> u32
+{
+  Hash := GetHash(Node.Kind);
+  for Node.Entities
+  {
+    Hash = GetHash(it.Id, Hash);
+    Hash = GetHash(it.P.x, Hash);
+    Hash = GetHash(it.P.y, Hash);
+  }
+  return Hash;
+}
+
+GetEntityAt
+:: (GraphContext: *graph_context, Node: *dag_node, P: vec2i)
+-> *node_entity
+{
+  for * Node.Entities
+  {
+    if it.P.x == P.x && it.P.y == P.y
+    {
+      return it;
+    }
+  }
+  return *StubNodeEntity;
+}
+
+StepNode
+:: (Arena: *arena, GraphContext: *graph_context, Node: *dag_node, Action: node_action)
+-> *dag_node
+{
+  NewNode := ArenaPushStruct(Arena, dag_node);
+  LinkedListAdd(*GraphContext.FirstNode, NewNode);
+  NewNode.Depth = Node.Depth + 1;
+  NewNode.Kind = .ongoing;
+  NewNode.Entities = ArenaPushView(Arena, node_entity, Node.Entities.count);
+  for Node.Entities
+  {
+    Entity := *NewNode.Entities[it_index];
+    Entity.Id = it_index;
+    Entity.Kind = it.Kind;
+    Entity.Flags = it.Flags;
+    Entity.P = it.P;
+  }
+  if Action.Kind ==
+  {
+    case .move;
+      Entity := *NewNode.Entities[Action.Actor.Id];
+      Target := vec2i.{Entity.P.x, Entity.P.y};
+      Other := GetEntityAt(GraphContext, Node, Target);
+      if Other.Flags & .causes_death
       {
-        if Abs(it.P.x - Player.P.x) == 1 || Abs(it.P.y - Player.P.y) == 1
-        {
-          Action: node_action;
-          Action.Kind = .interact;
-          Action.Actor = Player;
-          Action.Target = it;
-          ArrayAdd(*Actions, Action);
-        }
+        NewNode.Kind = .death;
       }
-    }
-    return Actions;
+      else
+      {
+        NewNode.Entities[Action.Actor.Id].P.x += Action.M.x;
+        NewNode.Entities[Action.Actor.Id].P.y += Action.M.y;
+      }
+    case .interact;
+      if Action.Target.Kind ==
+      {
+        case .door;
+          NewNode.Entities[Action.Target.Id].Flags |= .hidden;
+          NewNode.Entities[Action.Target.Id].Flags &= ~.blocking;
+        case .goal;
+          NewNode.Kind = .goal;
+      }
   }
 
-  NodeHash
-  :: (Node: *dag_node)
-  -> u32
+  return NewNode;
+}
+
+BuildGraph
+:: (Arena: *arena, Level: level)
+-> *dag_node
+{
+  max_depth :: 15;
+  Queue := CreateArenaArray(Arena, *dag_node);
+  NodeHash := CreateArenaTable(Arena, u32, *dag_node);
+  GraphContext := ArenaPushStruct(Arena, graph_context);
+
+  FirstNode := ArenaPushStruct(Arena, dag_node);
+  FirstNode.Entities = ArenaPushView(Arena, node_entity, Level.Entities.count);
+  for * Level.Entities
   {
-    Hash := GetHash(Node.Outcome);
-    for Node.Entities
-    {
-      Hash = GetHash(it.Id, Hash);
-      Hash = GetHash(it.P.x, Hash);
-      Hash = GetHash(it.P.y, Hash);
-    }
-    return Hash;
+    FirstNode.Entities[it_index].Id = it_index;
+    FirstNode.Entities[it_index].Kind = it.Kind;
+    FirstNode.Entities[it_index].Flags = it.Flags;
+    FirstNode.Entities[it_index].P.x = it.Px;
+    FirstNode.Entities[it_index].P.y = it.Py;
   }
-
-  StepNode
-  :: (Arena: *arena, GraphContext: *graph_context, Node: *dag_node, Action: node_action)
-  -> *dag_node
-  {
-    NewNode := ArenaPushStruct(Arena, dag_node);
-    LinkedListAdd(*GraphContext.FirstNode, NewNode);
-
-    NewNode.Depth = Node.Depth + 1;
-    NewNode.Outcome = .ongoing;
-    NewNode.Entities = ArenaPushView(Arena, node_entity, Node.Entities.count);
-    for Node.Entities
-    {
-      Entity := *NewNode.Entities[it_index];
-      Entity.Id = it_index;
-      Entity.Kind = it.Kind;
-      Entity.Flags = it.Flags;
-      Entity.P = it.P;
-    }
-
-    if Action.Kind ==
-    {
-      case .move;
-        Entity := *NewNode.Entities[Action.Actor.Id];
-        Target := vec2i.{Entity.P.x, Entity.P.y};
-        Other := GetEntityAt(Node, Target);
-        if Other.Flags & .causes_death
-        {
-          NewNode.Outcome = .death;
-          return;
-        }
-        else
-        {
-          NewNode.Entities[Action.Actor.Id].Px += Action.M.x;
-          NewNode.Entities[Action.Actor.Id].Py += Action.M.y;
-        }
-      case .interact;
-        if Action.Target.Kind ==
-        {
-          case .door;
-            NewNode.Entities[Action.Target.Id].Flags |= .hidden;
-            NewNode.Entities[Action.Target.Id].Flags &= ~.blocking;
-          case .goal;
-            NewNode.Outcome = .goal;
-        }
-    }
-
-    return null;
-  }
+  LinkedListAdd(*GraphContext.FirstNode, FirstNode);
+  ArrayAdd(*Queue, FirstNode);
 
   while Queue.count > 0
   {
@@ -459,25 +462,27 @@ BuildGraph
     ArrayRemove(*Queue, 0);
     if Node.Depth < max_depth
     {
-      Node.Hash = NodeHash(Node);
-      if !TableContains(*Visited, Node.Hash)
+      Node.Hash = HashNode(Node);
+      if !TableContains(*NodeHash, Node.Hash)
       {
         TableAdd(*NodeHash, Node.Hash, Node);
-        Node.Outcome = NodeOutcome(Node);
-        if Node.Outcome == .ongoing
+        Actions := NodeActions(Arena, Node);
+        Children := CreateArenaArray(Arena, *dag_node);
+        for Actions
         {
-          Actions := NodeActions(Node);
-          for Actions
+          Next := StepNode(Arena, GraphContext, Node, it);
+          NextHash := HashNode(Next);
+          if !TableContains(*NodeHash, NextHash)
           {
-            Next := StepNode(Node, it);
-            NextHash := HashNode(Next);
-            ArrayAdd(*Node.Children, Next);
+            ArrayAdd(*Children, Next);
             ArrayAdd(*Queue, Next);
           }
         }
+        Node.Children = Children;
       }
     }
   }
+  return GraphContext.FirstNode;
 }
 
 tile_drawable
@@ -522,6 +527,8 @@ main
 
   CurrentLevel = LoadLevel(GameArena, Level0);
 
+  FirstNode := BuildGraph(GameArena, CurrentLevel);
+
   Quit := false;
   while !Quit
   {
@@ -553,16 +560,20 @@ main
                 Quit = true;
 
               case #char "W";
-                TryMoveEntity(GameArena, *CurrentLevel, CurrentLevel.Player,  0, -1);
+                CurrentLevel.Player.Py -= 1;
+                //TryMoveEntity(GameArena, *CurrentLevel, CurrentLevel.Player,  0, -1);
                 PlayerDirection = .up;
               case #char "A";
-                TryMoveEntity(GameArena, *CurrentLevel, CurrentLevel.Player, -1,  0);
+                CurrentLevel.Player.Px -= 1;
+                //TryMoveEntity(GameArena, *CurrentLevel, CurrentLevel.Player, -1,  0);
                 PlayerDirection = .left;
               case #char "S";
-                TryMoveEntity(GameArena, *CurrentLevel, CurrentLevel.Player,  0,  1);
+                CurrentLevel.Player.Py += 1;
+                //TryMoveEntity(GameArena, *CurrentLevel, CurrentLevel.Player,  0,  1);
                 PlayerDirection = .down;
               case #char "D";
-                TryMoveEntity(GameArena, *CurrentLevel, CurrentLevel.Player,  1,  0);
+                CurrentLevel.Player.Px += 1;
+                //TryMoveEntity(GameArena, *CurrentLevel, CurrentLevel.Player,  1,  0);
                 PlayerDirection = .right;
               case #char "E";
                 HandleUseKey(GameArena, CurrentLevel);
@@ -586,18 +597,33 @@ main
 
     Simp.clear_render_target(.08, .08, .08, 1);
     DrawBatcher := ArenaPushStruct(FrameArena, draw_batcher);
-    if !HideLevel
+
+    for EachElement(FirstNode)
     {
-      DrawLevel(FrameArena, DrawBatcher, CurrentLevel);
+      for it.Entities
+      {
+        Offset := vec2i.{
+          it_index * 16,
+          it_index % 16
+        };
+        Ps := ScreenPositionFromTilePosition(CurrentLevel, .{Offset.x + it.P.x, Offset.y + it.P.y});
+        Quad := QuadFromScreenPosition(CurrentLevel, Ps);
+        DrawColouredQuad(FrameArena, DrawBatcher, Quad, .{1,1,1,1});
+      }
     }
 
-    Drawables := GetTileDrawables(FrameArena, CurrentLevel);
-    for Drawables
-    {
-      Ps := ScreenPositionFromTilePosition(CurrentLevel, it.P);
-      Quad := QuadFromScreenPosition(CurrentLevel, Ps);
-      DrawTexturedQuad(FrameArena, DrawBatcher, Quad, it.Texture, it.Colour);
-    }
+    // if !HideLevel
+    // {
+    //   DrawLevel(FrameArena, DrawBatcher, CurrentLevel);
+    // }
+
+    // Drawables := GetTileDrawables(FrameArena, CurrentLevel);
+    // for Drawables
+    // {
+    //   Ps := ScreenPositionFromTilePosition(CurrentLevel, it.P);
+    //   Quad := QuadFromScreenPosition(CurrentLevel, Ps);
+    //   DrawTexturedQuad(FrameArena, DrawBatcher, Quad, it.Texture, it.Colour);
+    // }
 
     DrawBatches(DrawBatcher);
     DrawAllText();
@@ -885,152 +911,3 @@ Simp :: #import "Simp";
 Input :: #import "Input";
 #import "Basic";
 #import "Math";
-
-/*
-
-InBounds
-:: (Level: level, P: vec2i)
--> bool
-{
-  InsideLeft := P.x >= 0;
-  InsideRight := P.x < Level.Width;
-  InsideTop := P.y >= 0;
-  InsideBottom := P.y < Level.Height;
-  return InsideLeft && InsideRight && InsideTop && InsideBottom;
-}
-
-IsWalkable
-:: (Level: level, P: vec2i, Goal: vec2i)
--> bool
-{
-  Tile := GetTileAt(Level, P.x, P.y);
-  Entity := GetEntityAt(Level, P.x, P.y);
-
-  if Tile.Blocking return false;
-
-  GoalEntity := GetEntityAt(Level, Goal.x, Goal.y);
-  if GoalEntity.Kind == .goal
-  {
-    if GoalEntity.Flags & .interactable return true;
-  }
-
-  if Entity.Flags & .blocking return false;
-
-  return true;
-}
-
-pathfinding_state
-:: struct
-{
-  Visited: [] bool;
-  Path: [..] vec2i;
-  AllPaths: [..] [] vec2i;
-}
-
-FindPathRecursive
-:: (Arena: *arena, State: *pathfinding_state, Level: level, P: vec2i, Goal: vec2i, Depth := 0)
-{
-  MaxDepth := 5000;//Max(Level.Width, Level.Height);
-  if Depth >= MaxDepth
-  {
-    return;
-  }
-  if !InBounds(Level, P)
-  {
-    return;
-  }
-  if State.Visited[P.x + P.y*Level.Width]
-  {
-    return;
-  }
-  if !IsWalkable(Level, P, Goal)
-  {
-    return;
-  }
-
-  ArrayAdd(*State.Path, P);
-  State.Visited[P.x + P.y*Level.Width] = true;
-
-  if P.x == Goal.x && P.y == Goal.y
-  {
-    Path := ArenaPushView(Arena, vec2i, State.Path.count);
-    for * Path it.* = State.Path[it_index];
-    ArrayAdd(*State.AllPaths, Path);
-  }
-  else
-  {
-    FindPathRecursive(Arena, State, Level, .{P.x + 1, P.y}, Goal, Depth + 1);
-    FindPathRecursive(Arena, State, Level, .{P.x - 1, P.y}, Goal, Depth + 1);
-    FindPathRecursive(Arena, State, Level, .{P.x, P.y + 1}, Goal, Depth + 1);
-    FindPathRecursive(Arena, State, Level, .{P.x, P.y - 1}, Goal, Depth + 1);
-  }
-
-  State.Visited[P.x + P.y*Level.Width] = false;
-  State.Path.count -= 1;
-}
-
-FindAllPathsToTile
-:: (Arena: *arena, Level: level, Start: vec2i, Goal: vec2i)
--> [] [] vec2i
-{
-  State := ArenaPushStruct(Arena, pathfinding_state);
-  State.Visited = ArenaPushView(Arena, bool, Level.Width * Level.Height);
-  State.Path = CreateArenaArray(Arena, vec2i);
-  State.AllPaths = CreateArenaArray(Arena, [] vec2i);
-  FindPathRecursive(Arena, State, Level, Start, Goal);
-  return State.AllPaths;
-}
-
-FindShortestPathToTile
-:: (Arena: *arena, Level: level, Start: vec2i, Goal: vec2i)
--> [] vec2i, bool
-{
-  Visited := ArenaPushView(Arena, bool, Level.Width * Level.Height);
-  Parent := ArenaPushView(Arena, vec2i, Level.Width * Level.Height);
-  Path := CreateArenaArray(Arena, vec2i);
-
-  Queue := CreateArenaArray(Arena, vec2i);
-  ArrayAdd(*Queue, Start);
-
-  W := Level.Width;
-  Visited[Start.x + Start.y*W] = true;
-  Parent[Start.x + Start.y*W] = .{-1, -1};
-
-  while Queue.count > 0
-  {
-    Current := Queue[0];
-    ArrayRemove(*Queue, 0);
-    if Current.x == Goal.x && Current.y == Goal.y
-    {
-      P := Goal;
-      while P.x != -1 && P.y != -1
-      {
-        ArrayAdd(*Path, P);
-        P = Parent[P.x + P.y*W];
-      }
-      break;
-    }
-    else
-    {
-      Dirs := vec2i.[
-        .{1, 0},
-        .{0, -1},
-        .{-1, 0},
-        .{0, 1},
-      ];
-      for Dirs
-      {
-        P := vec2i.{Current.x + it.x, Current.y + it.y};
-        if InBounds(Level, P) && IsWalkable(Level, P, Goal) && !Visited[P.x + P.y*W]
-        {
-          Visited[P.x + P.y*W] = true;
-          Parent[P.x + P.y*W] = Current;
-          ArrayAdd(*Queue, P);
-        }
-      }
-    }
-  }
-
-  return Path, Path.count > 0;
-}
-*/

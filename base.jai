@@ -10,21 +10,20 @@ LinkedListAdd
 }
 
 linked_list
-:: struct($T: Type)
+:: struct($T: Type, $NextName: string)
 {
   First: *T;
-  NextName: string;
 }
 
 EachElement
 :: (First: *$T, $NextName := "Next")
--> linked_list
+-> linked_list(T, NextName)
 {
-  return .{First, NextName};
+  return .{First};
 }
 
 for_expansion
-:: (List: linked_list($T), Body: Code, Flags: For_Flags) #expand
+:: (List: linked_list($T, $N), Body: Code, Flags: For_Flags) #expand
 {
   Value := List.First;
   Index := 0;
@@ -38,7 +37,7 @@ for_expansion
       #insert Body;
     }
 
-    #insert #run tprint("Value := Value.%;", List.NextName);
+    #insert #run tprint("Value = Value.%;", N);
     Index += 1;
   }
 }
@@ -78,6 +77,7 @@ quad
 // NOTE(tt): hashing
 
 HashString :: get_hash;
+GetHash :: get_hash;
 
 // NOTE(tt): misc
 
